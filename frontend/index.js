@@ -1,0 +1,1 @@
+const rust = import('./pkg');
