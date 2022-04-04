@@ -53,7 +53,8 @@ pub async fn main() {
     let (_, _, mut current_cells) = load_image_cells("/placeplace_current.png", &lookup).await;
 
     if cells.len() != current_cells.len() {
-        current_cells = vec![0; cells.len()];
+        // Will never match, to fall back to random
+        current_cells = vec![0xF0; cells.len()];
     }
 
     let data = GlobalData {
