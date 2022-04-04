@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use once_cell::sync::OnceCell;
 use palette::PaletteColor;
-use rand::Rng;
+use rand::{prelude::ThreadRng, Rng};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::{prelude::*, JsCast};
 use wasm_bindgen_futures::JsFuture;
@@ -49,7 +49,12 @@ pub async fn main() {
         lookup.insert(color.color, i);
     }
 
-    let (width, height, cells) = load_image_cells(&lookup).await;
+    let (width, height, cells) = load_image_cells("/placeplace.png", &lookup).await;
+    let (_, _, mut current_cells) = load_image_cells("/placeplace_current.png", &lookup).await;
+
+    if cells.len() != current_cells.len() {
+        current_cells = vec![0; cells.len()];
+    }
 
     let data = GlobalData {
         config: configuration,
@@ -57,6 +62,7 @@ pub async fn main() {
         width,
         height,
         cells,
+        current_cells,
     };
     GLOBAL.set(data).unwrap();
 
@@ -134,20 +140,35 @@ struct GlobalData {
     width: usize,
     height: usize,
     cells: Vec<u8>,
+    current_cells: Vec<u8>,
 }
 
 fn pick_new_pixel() {
     let g = GLOBAL.get().unwrap();
-
-    // Pick the random pixel
     let mut rng = rand::thread_rng();
-    let index = match g.config.dither {
+
+    for _ in 0..50 {
+        // Pick the random pixel
+        let index = next_index(g, &mut rng);
+
+        // If the pixel doesn't match, target that
+        if g.current_cells[index] != g.cells[index] {
+            set_active_pixel(index);
+            return;
+        }
+    }
+
+    // Fall back to just any random pixel
+    let index = next_index(g, &mut rng);
+    set_active_pixel(index);
+}
+
+fn next_index(g: &GlobalData, rng: &mut ThreadRng) -> usize {
+    match g.config.dither {
         DitherMode::None => rng.gen_range(1..(g.cells.len())),
         DitherMode::Even => rng.gen_range(1..(g.cells.len() / 2)) * 2,
         DitherMode::Odd => rng.gen_range(1..(g.cells.len() / 2)) * 2 + 1,
-    };
-
-    set_active_pixel(index);
+    }
 }
 
 fn pick_canvas_pixel(event: MouseEvent) {

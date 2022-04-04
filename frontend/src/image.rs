@@ -6,14 +6,17 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, RequestCache, RequestInit, Response};
 
-pub async fn load_image_cells(lookup: &HashMap<[u8; 3], usize>) -> (usize, usize, Vec<u8>) {
+pub async fn load_image_cells(
+    url: &str,
+    lookup: &HashMap<[u8; 3], usize>,
+) -> (usize, usize, Vec<u8>) {
     let window = web_sys::window().unwrap();
 
     // Fetch the image
     let mut opts = RequestInit::new();
     opts.method("GET");
     opts.cache(RequestCache::Reload);
-    let request = Request::new_with_str_and_init("/placeplace.png", &opts).unwrap();
+    let request = Request::new_with_str_and_init(url, &opts).unwrap();
 
     let response_value = JsFuture::from(window.fetch_with_request(&request))
         .await
