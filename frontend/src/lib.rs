@@ -77,6 +77,14 @@ struct Configuration {
     ready: bool,
     offset_x: usize,
     offset_y: usize,
+    dither: DitherMode,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+enum DitherMode {
+    None,
+    Even,
+    Odd,
 }
 
 fn init_ready() {
@@ -129,8 +137,15 @@ struct GlobalData {
 }
 
 fn pick_new_pixel() {
+    let g = GLOBAL.get().unwrap();
+
     // Pick the random pixel
-    let index = rand::thread_rng().gen_range(1..(GLOBAL.get().unwrap().cells.len()));
+    let mut rng = rand::thread_rng();
+    let index = match g.config.dither {
+        DitherMode::None => rng.gen_range(1..(g.cells.len())),
+        DitherMode::Even => rng.gen_range(1..(g.cells.len() / 2)) * 2,
+        DitherMode::Odd => rng.gen_range(1..(g.cells.len() / 2)) * 2 + 1,
+    };
 
     set_active_pixel(index);
 }
