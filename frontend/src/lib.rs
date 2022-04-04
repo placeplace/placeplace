@@ -5,22 +5,63 @@ mod palette;
 
 use std::collections::HashMap;
 
-use once_cell::sync::Lazy;
+use once_cell::sync::OnceCell;
 use palette::PaletteColor;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::{prelude::*, JsCast};
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, MouseEvent};
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{
+    CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, MouseEvent, Request, RequestCache,
+    RequestInit, Response,
+};
 
 use crate::{image::load_image_cells, palette::create_palette};
 
-const READY: bool = false;
-const OFFSET_X: usize = 1346;
-const OFFSET_Y: usize = 1703;
 const PIXEL_SIZE: i32 = 5;
 
 #[wasm_bindgen(start)]
-pub fn main() {
-    if READY {
+pub async fn main() {
+    let window = web_sys::window().unwrap();
+
+    // Fetch configuration
+    let mut opts = RequestInit::new();
+    opts.method("GET");
+    opts.cache(RequestCache::Reload);
+    let request = Request::new_with_str_and_init("/placeplace.json", &opts).unwrap();
+
+    let response_value = JsFuture::from(window.fetch_with_request(&request))
+        .await
+        .unwrap();
+    let response: Response = response_value.dyn_into().unwrap();
+
+    let json = JsFuture::from(response.json().unwrap()).await.unwrap();
+    let configuration: Configuration = json.into_serde().unwrap();
+
+    let info = format!("{:?}", configuration);
+    web_sys::console::log_1(&info.into());
+
+    // Store the configuration globally
+    let colors = create_palette();
+
+    let mut lookup = HashMap::new();
+    for (i, color) in colors.iter().enumerate() {
+        lookup.insert(color.color, i);
+    }
+
+    let (width, height, cells) = load_image_cells(&lookup).await;
+
+    let data = GlobalData {
+        config: configuration,
+        colors,
+        width,
+        height,
+        cells,
+    };
+    GLOBAL.set(data).unwrap();
+
+    // Different behavior depending on if we're set to ready
+    if GLOBAL.get().unwrap().config.ready {
         init_ready();
     } else {
         // Display not-ready
@@ -31,7 +72,15 @@ pub fn main() {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct Configuration {
+    ready: bool,
+    offset_x: usize,
+    offset_y: usize,
+}
+
 fn init_ready() {
+    let g = GLOBAL.get().unwrap();
     let window = web_sys::window().unwrap();
     let document = window.document().unwrap();
 
@@ -60,7 +109,7 @@ fn init_ready() {
     click_handler.forget();
 
     // Initialize overview data
-    let topleft_text = format!("{}, {}", OFFSET_X, OFFSET_Y);
+    let topleft_text = format!("{}, {}", g.config.offset_x, g.config.offset_y);
     let label = document.get_element_by_id("pp-label-topleft").unwrap();
     label.set_inner_html(&topleft_text);
 
@@ -68,26 +117,11 @@ fn init_ready() {
     pick_new_pixel();
 }
 
-static GLOBAL: Lazy<GlobalData> = Lazy::new(|| {
-    let colors = create_palette();
+static GLOBAL: OnceCell<GlobalData> = OnceCell::new();
 
-    // Create a lookup map for image decoding
-    let mut lookup = HashMap::new();
-    for (i, color) in colors.iter().enumerate() {
-        lookup.insert(color.color, i);
-    }
-
-    let (width, height, cells) = load_image_cells(&lookup);
-
-    GlobalData {
-        colors,
-        width,
-        height,
-        cells,
-    }
-});
-
+#[derive(Debug)]
 struct GlobalData {
+    config: Configuration,
     colors: Vec<PaletteColor>,
     width: usize,
     height: usize,
@@ -96,12 +130,13 @@ struct GlobalData {
 
 fn pick_new_pixel() {
     // Pick the random pixel
-    let index = rand::thread_rng().gen_range(1..(GLOBAL.cells.len()));
+    let index = rand::thread_rng().gen_range(1..(GLOBAL.get().unwrap().cells.len()));
 
     set_active_pixel(index);
 }
 
 fn pick_canvas_pixel(event: MouseEvent) {
+    let g = GLOBAL.get().unwrap();
     let window = web_sys::window().unwrap();
     let document = window.document().unwrap();
 
@@ -117,28 +152,25 @@ fn pick_canvas_pixel(event: MouseEvent) {
     let pixel_x = (event.offset_x() - offset_x) / PIXEL_SIZE;
     let pixel_y = (event.offset_y() - offset_y) / PIXEL_SIZE;
 
-    if pixel_x < 0
-        || pixel_y < 0
-        || pixel_x >= GLOBAL.width as i32
-        || pixel_y >= GLOBAL.height as i32
-    {
+    if pixel_x < 0 || pixel_y < 0 || pixel_x >= g.width as i32 || pixel_y >= g.height as i32 {
         return;
     }
 
-    set_active_pixel(pixel_x as usize + (pixel_y as usize * GLOBAL.width));
+    set_active_pixel(pixel_x as usize + (pixel_y as usize * g.width));
 }
 
 fn set_active_pixel(index: usize) {
+    let g = GLOBAL.get().unwrap();
     let window = web_sys::window().unwrap();
     let document = window.document().unwrap();
 
     // Resolve pixels
-    let relative_x = index % GLOBAL.width;
-    let relative_y = index / GLOBAL.width;
-    let x = relative_x + OFFSET_X;
-    let y = relative_y + OFFSET_Y;
+    let relative_x = index % g.width;
+    let relative_y = index / g.width;
+    let x = relative_x + g.config.offset_x;
+    let y = relative_y + g.config.offset_y;
 
-    let color = &GLOBAL.colors[GLOBAL.cells[index] as usize];
+    let color = &g.colors[g.cells[index] as usize];
     let text = format!("Your pixel is <span class=\"font-semibold\">{}</span> at <span class=\"font-semibold\">{}</span>, <span class=\"font-semibold\">{}</span>!", color.name, x, y);
     let direct_link = format!("https://www.reddit.com/r/place/?cx={}&cy={}&px=11", x, y);
     let link_html = format!("<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"{}\">Direct link to r/place location...</a>", direct_link);
@@ -166,6 +198,7 @@ fn set_active_pixel(index: usize) {
 }
 
 fn redraw_canvas(pixel_x: i32, pixel_y: i32) {
+    let g = GLOBAL.get().unwrap();
     let window = web_sys::window().unwrap();
     let document = window.document().unwrap();
 
@@ -191,11 +224,11 @@ fn redraw_canvas(pixel_x: i32, pixel_y: i32) {
     context.clear_rect(0.0, 0.0, canvas_width as f64, canvas_height as f64);
 
     // Draw the image centered on the screen
-    for (i, cell) in GLOBAL.cells.iter().enumerate() {
-        let x = (i % GLOBAL.width) as i32;
-        let y = (i / GLOBAL.width) as i32;
+    for (i, cell) in g.cells.iter().enumerate() {
+        let x = (i % g.width) as i32;
+        let y = (i / g.width) as i32;
 
-        let fill = color_to_rgb(GLOBAL.colors[*cell as usize].color);
+        let fill = color_to_rgb(g.colors[*cell as usize].color);
         context.set_fill_style(&fill.into());
         context.fill_rect(
             (offset_x + (x * PIXEL_SIZE)) as f64,
@@ -246,8 +279,9 @@ fn color_to_rgb(color: [u8; 3]) -> String {
 }
 
 fn get_offset(canvas_width: u32, canvas_height: u32) -> (i32, i32) {
-    let image_width = GLOBAL.width as i32 * PIXEL_SIZE;
-    let image_height = GLOBAL.height as i32 * PIXEL_SIZE;
+    let g = GLOBAL.get().unwrap();
+    let image_width = g.width as i32 * PIXEL_SIZE;
+    let image_height = g.height as i32 * PIXEL_SIZE;
     let offset_x = (canvas_width as i32 - image_width) / 2;
     let offset_y = (canvas_height as i32 - image_height) / 2;
 

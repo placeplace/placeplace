@@ -1,10 +1,34 @@
 use std::{collections::HashMap, io::Cursor};
 
+use js_sys::Uint8Array;
 use png::ColorType;
+use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{Request, RequestCache, RequestInit, Response};
 
-pub fn load_image_cells(lookup: &HashMap<[u8; 3], usize>) -> (usize, usize, Vec<u8>) {
-    // Load the image from bundled data
-    let image_data = include_bytes!("../image.png");
+pub async fn load_image_cells(lookup: &HashMap<[u8; 3], usize>) -> (usize, usize, Vec<u8>) {
+    let window = web_sys::window().unwrap();
+
+    // Fetch the image
+    let mut opts = RequestInit::new();
+    opts.method("GET");
+    opts.cache(RequestCache::Reload);
+    let request = Request::new_with_str_and_init("/placeplace.png", &opts).unwrap();
+
+    let response_value = JsFuture::from(window.fetch_with_request(&request))
+        .await
+        .unwrap();
+    let response: Response = response_value.dyn_into().unwrap();
+
+    let buffer_value = JsFuture::from(response.array_buffer().unwrap())
+        .await
+        .unwrap();
+    let array = Uint8Array::new(&buffer_value);
+
+    let mut image_data = vec![0; array.length() as usize];
+    array.copy_to(&mut image_data[..]);
+
+    // Load the image
     let decoder = png::Decoder::new(Cursor::new(image_data));
     let mut reader = decoder.read_info().unwrap();
 
@@ -33,7 +57,7 @@ pub fn load_image_cells(lookup: &HashMap<[u8; 3], usize>) -> (usize, usize, Vec<
         } else {
             let log_text = format!("Invalid pixel: ({}, {}) -> {:?}", x, y, color);
             web_sys::console::log_1(&log_text.into());
-    
+
             *cell = 0;
         }
     }

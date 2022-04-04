@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct PaletteColor {
     pub name: String,
     pub color: [u8; 3],
