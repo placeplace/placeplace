@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/*",
     "frontend",
+    "rangefinder-api",
 ]
 resolver = "2"
